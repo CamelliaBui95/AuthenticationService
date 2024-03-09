@@ -50,7 +50,7 @@ public class Cryptographer {
 
         cipher.init(Cipher.DECRYPT_MODE, secretKey);
 
-        byte[] base64DecodedBytes = Base64.getDecoder().decode(encodedData);
+        byte[] base64DecodedBytes = Base64.getUrlDecoder().decode(encodedData);
 
         byte[] decodedBytes = cipher.doFinal(base64DecodedBytes);
 
