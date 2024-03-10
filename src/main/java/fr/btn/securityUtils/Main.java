@@ -1,11 +1,21 @@
 package fr.btn.securityUtils;
 
+
+import javax.crypto.BadPaddingException;
+import javax.crypto.IllegalBlockSizeException;
+import javax.crypto.NoSuchPaddingException;
+import java.io.UnsupportedEncodingException;
+import java.math.BigDecimal;
+import java.security.InvalidKeyException;
+import java.security.NoSuchAlgorithmException;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class Main {
-    public static void main(String[] args) {
+    public static void main(String[] args) throws UnsupportedEncodingException, NoSuchPaddingException, IllegalBlockSizeException, NoSuchAlgorithmException, BadPaddingException, InvalidKeyException {
 
         /*String testStr = "hello|world|at|";
 
@@ -49,10 +59,6 @@ public class Main {
         System.out.println(calendar.getTime().getTime());
         System.out.println(expiration.getTime() - now.getTime() >= 0);*/
 
-        String encoded = "fYDy939B8vWaJqrRw1NLm8zHGmGHBPTGB9gP5il9rtBN-HMQczvDk9-IKRBafe_e";
 
-        byte[] decoded = Base64.getUrlDecoder().decode(encoded);
-
-        System.out.println(new String(decoded));
     }
 }

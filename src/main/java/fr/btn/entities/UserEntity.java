@@ -7,6 +7,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Data
 @NoArgsConstructor
@@ -43,4 +44,7 @@ public class UserEntity {
 
     @Column(name="STATUS")
     private String status;
+
+    @Column(name="CONFIRM_DATE_TIME")
+    private LocalDateTime confirmDateTime;
 }

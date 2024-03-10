@@ -4,13 +4,16 @@ import com.fasterxml.jackson.databind.ser.Serializers;
 
 import javax.crypto.*;
 import javax.crypto.spec.SecretKeySpec;
+import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.util.Arrays;
 import java.util.Base64;
 
 public class Cryptographer {
     private static final String ALGO = "AES";
-    private static final String SECRET_KEY = "Put_Your_Secret_Key_Here";
+    private static final String SECRET_KEY = "PUT_YOUR_SECRET_KEY_HERE";
 
     public static String encode(String data)
             throws NoSuchPaddingException,
@@ -23,7 +26,7 @@ public class Cryptographer {
         Cipher cipher = Cipher.getInstance(ALGO);
 
         // Create a secret key from the provided key in string format
-        SecretKey secretKey = new SecretKeySpec(SECRET_KEY.getBytes(), ALGO);
+        SecretKey secretKey = new SecretKeySpec(Arrays.copyOf(SECRET_KEY.getBytes(StandardCharsets.UTF_8), 16), ALGO);
 
         // Initialize the cipher in encrypt mode
         cipher.init(Cipher.ENCRYPT_MODE, secretKey);
@@ -46,7 +49,7 @@ public class Cryptographer {
 
         Cipher cipher = Cipher.getInstance(ALGO);
 
-        SecretKey secretKey = new SecretKeySpec(SECRET_KEY.getBytes(), ALGO);
+        SecretKey secretKey = new SecretKeySpec(Arrays.copyOf(SECRET_KEY.getBytes(StandardCharsets.UTF_8), 16), ALGO);
 
         cipher.init(Cipher.DECRYPT_MODE, secretKey);
 
