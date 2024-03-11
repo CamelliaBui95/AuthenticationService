@@ -15,6 +15,7 @@ import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.*;
+import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 
 import java.net.URI;
@@ -22,10 +23,12 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 @Path("/auth")
 @Produces(MediaType.APPLICATION_JSON)
+@Tag(name="Authentication")
 public class AuthResource {
     @Context
     UriInfo request;
@@ -59,7 +62,8 @@ public class AuthResource {
 
         userRepository.persist(userEntity);
 
-        String encodedActivationStr = generateEncodedStringWithUserData(userEntity);
+        List<String> userData = Arrays.asList(userEntity.getUsername(), userEntity.getRole());
+        String encodedActivationStr = Utils.generateEncodedStringWithUserData(userData);
 
         URI uri = UriBuilder
                 .fromUri(request.getBaseUri())
@@ -93,7 +97,9 @@ public class AuthResource {
         if(!Argon2.validate(password, foundUser.getPassword()))
             return Response.ok("Password is not correct.").status(Response.Status.NOT_ACCEPTABLE).build();
 
-        String confirmCode = generateEncodedStringWithUserData(foundUser);
+        List<String> userData = Arrays.asList(foundUser.getUsername(), foundUser.getRole());
+        String confirmCode = Utils.generateEncodedStringWithUserData(userData);
+
         foundUser.setStatus("LOCKED");
         foundUser.setConfirmDateTime(LocalDateTime.now());
 
@@ -112,7 +118,7 @@ public class AuthResource {
     @Path("/account_confirm")
     public Response confirmAccount(@QueryParam("code") String encodedData) {
         try {
-            List<String> userData = decodeAndExtractData(encodedData);
+            List<String> userData = Utils.decodeAndExtractData(encodedData);
 
             // send links to login/register endpoints here
             if(!isCodeValid(userData))
@@ -173,7 +179,7 @@ public class AuthResource {
         if(username == null || username.isEmpty())
             return false;
 
-        UserEntity foundUser = userRepository.find("username=?1", username).firstResult();
+        UserEntity foundUser = userRepository.findUserByUsername(username);
 
         if(foundUser != null && foundUser.getStatus().equals("INACTIVE") && isAccountExpired(foundUser))
             return userRepository.deleteById(foundUser.getId());
@@ -198,53 +204,6 @@ public class AuthResource {
             return false;
         }
         return true;
-    }
-
-    private String generateEncodedStringWithUserData(UserEntity user) {
-        /*Calendar calendar = Calendar.getInstance();
-        calendar.add(Calendar.MINUTE, 10);
-
-        long expInMilliseconds = calendar.getTimeInMillis();*/
-
-        String username = user.getUsername();
-        String role = user.getRole();
-        try {
-            return Cryptographer.encode(String.format("%s|%s|", username, role));
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
-
-    }
-
-    private List<String> decodeAndExtractData(String encodedData) {
-        System.out.println("encoded-data=" + encodedData);
-
-        try {
-            String decodedData = Cryptographer.decode(encodedData);
-            System.out.println("decoded-data=" + decodedData);
-
-            StringBuilder builder = new StringBuilder();
-            List<String> parts = new ArrayList<>();
-
-            int p = 0;
-            while(p < decodedData.length()) {
-                if(decodedData.charAt(p) == '|') {
-                    String attribute = builder.toString();
-                    parts.add(attribute);
-                    builder.delete(0, attribute.length());
-                }
-                else
-                    builder.append(decodedData.charAt(p));
-
-                p++;
-            }
-
-            return parts;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return null;
-        }
     }
 
     private boolean isCodeValid(List<String> userData) {

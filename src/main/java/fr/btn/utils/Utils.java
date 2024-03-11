@@ -3,11 +3,16 @@ package fr.btn.utils;
 import fr.btn.entities.UserEntity;
 import fr.btn.securityUtils.Cryptographer;
 
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 
 
 public class Utils {
+
+    private static final int EXP_IN_MILLIS = 3 * 60 * 1000;
 
     private Utils() {}
     public static String generateEncodedStringWithUserData(List<String> data) {
@@ -57,5 +62,19 @@ public class Utils {
             e.printStackTrace();
             return null;
         }
+    }
+
+    public static boolean isAccountExpired(UserEntity account) {
+        LocalDateTime start = account.getConfirmDateTime();
+
+        if(start == null)
+            return false;
+
+        LocalDateTime end = LocalDateTime.now();
+
+        Instant startInstant = start.atZone(ZoneId.systemDefault()).toInstant();
+        Instant endInstant = end.atZone(ZoneId.systemDefault()).toInstant();
+
+        return endInstant.toEpochMilli() - startInstant.toEpochMilli() >= EXP_IN_MILLIS;
     }
 }
