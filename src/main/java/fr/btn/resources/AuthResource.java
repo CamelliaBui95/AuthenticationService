@@ -1,10 +1,12 @@
 package fr.btn.resources;
 
+import fr.btn.dtos.LoginForm;
 import fr.btn.dtos.MailClient;
 import fr.btn.dtos.NewUser;
 import fr.btn.dtos.ResponseUser;
 import fr.btn.entities.UserEntity;
 import fr.btn.repositories.UserRepository;
+import fr.btn.securityUtils.Argon2;
 import fr.btn.securityUtils.Cryptographer;
 import fr.btn.securityUtils.TokenUtil;
 import fr.btn.services.MailService;
@@ -57,31 +59,61 @@ public class AuthResource {
 
         userRepository.persist(userEntity);
 
-        String encodedActivationStr = generateEncodedAccountActivationStr(userEntity);
+        String encodedActivationStr = generateEncodedStringWithUserData(userEntity);
         userEntity.setConfirmDateTime(LocalDateTime.now());
 
         URI uri = UriBuilder
                 .fromUri(request.getBaseUri())
-                .path("auth/confirm")
+                .path("auth/account_confirm")
                 .queryParam("code", encodedActivationStr).build();
 
         sendMail(newUser.getEmail(), "Account Activation", uri.toString());
 
-        return Response.ok(new ResponseUser(userEntity)).status(Response.Status.CREATED).build();
+        return Response.ok("Please activate your account by clicking on the link that has been sent to your email.").status(Response.Status.CREATED).build();
     }
 
-    public Response login() {
-        return null;
+    @POST
+    @Path("/login")
+    @Consumes(MediaType.APPLICATION_JSON)
+    @Transactional
+    public Response login(LoginForm loginForm) {
+        String username = loginForm.getUsername();
+        String password = loginForm.getPassword();
+
+        if(loginForm == null || username == null || username.isEmpty() || password == null || password.isEmpty())
+            return Response.status(Response.Status.BAD_REQUEST).build();
+
+        // send link to forgotUsername/register here
+        UserEntity foundUser = userRepository.find("username=?1", username).firstResult();
+        if(foundUser == null || foundUser.getStatus().equals("INACTIVE")) // If user is inactive, he hasn't activate his account and so he cannot log in
+            return Response.status(Response.Status.NOT_FOUND).build();
+
+        // send link to forgotPassword here
+        if(!Argon2.validate(password, foundUser.getPassword()))
+            return Response.ok("Password is not correct.").status(Response.Status.NOT_ACCEPTABLE).build();
+
+        String confirmCode = generateEncodedStringWithUserData(foundUser);
+        foundUser.setStatus("LOCKED");
+        foundUser.setConfirmDateTime(LocalDateTime.now());
+
+        URI uri = UriBuilder
+                .fromUri(request.getBaseUri())
+                .path("auth/account_confirm")
+                .queryParam("code", confirmCode).build();
+
+        sendMail(foundUser.getEmail(), "Confirm Login", uri.toString());
+
+        return Response.ok("Please check your email and confirm your login.").build();
     }
 
     @GET
     @Transactional
-    @PermitAll
-    @Path("/confirm")
+    @Path("/account_confirm")
     public Response confirmAccount(@QueryParam("code") String encodedData) {
         try {
             List<String> userData = decodeAndExtractData(encodedData);
 
+            // send links to login/register endpoints here
             if(!isActivationCodeValid(userData))
                 return Response.ok("This code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
@@ -144,7 +176,7 @@ public class AuthResource {
         return true;
     }
 
-    private String generateEncodedAccountActivationStr(UserEntity user) {
+    private String generateEncodedStringWithUserData(UserEntity user) {
         /*Calendar calendar = Calendar.getInstance();
         calendar.add(Calendar.MINUTE, 10);
 
@@ -162,8 +194,11 @@ public class AuthResource {
     }
 
     private List<String> decodeAndExtractData(String encodedData) {
+        System.out.println("encoded-data=" + encodedData);
+
         try {
             String decodedData = Cryptographer.decode(encodedData);
+            System.out.println("decoded-data=" + encodedData);
 
             StringBuilder builder = new StringBuilder();
             List<String> parts = new ArrayList<>();
@@ -171,9 +206,9 @@ public class AuthResource {
             int p = 0;
             while(p < decodedData.length()) {
                 if(decodedData.charAt(p) == '|') {
-                    String word = builder.toString();
-                    parts.add(word);
-                    builder.delete(0, word.length());
+                    String attribute = builder.toString();
+                    parts.add(attribute);
+                    builder.delete(0, attribute.length());
                 }
                 else
                     builder.append(decodedData.charAt(p));
