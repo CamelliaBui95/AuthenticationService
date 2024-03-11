@@ -3,13 +3,13 @@ package fr.btn.resources;
 import fr.btn.dtos.LoginForm;
 import fr.btn.dtos.MailClient;
 import fr.btn.dtos.NewUser;
-import fr.btn.dtos.ResponseUser;
 import fr.btn.entities.UserEntity;
 import fr.btn.repositories.UserRepository;
 import fr.btn.securityUtils.Argon2;
 import fr.btn.securityUtils.Cryptographer;
 import fr.btn.securityUtils.TokenUtil;
 import fr.btn.services.MailService;
+import fr.btn.utils.Utils;
 import jakarta.annotation.security.PermitAll;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -60,7 +60,6 @@ public class AuthResource {
         userRepository.persist(userEntity);
 
         String encodedActivationStr = generateEncodedStringWithUserData(userEntity);
-        userEntity.setConfirmDateTime(LocalDateTime.now());
 
         URI uri = UriBuilder
                 .fromUri(request.getBaseUri())
@@ -68,6 +67,8 @@ public class AuthResource {
                 .queryParam("code", encodedActivationStr).build();
 
         sendMail(newUser.getEmail(), "Account Activation", uri.toString());
+
+        userEntity.setConfirmDateTime(LocalDateTime.now());
 
         return Response.ok("Please activate your account by clicking on the link that has been sent to your email.").status(Response.Status.CREATED).build();
     }
@@ -114,10 +115,10 @@ public class AuthResource {
             List<String> userData = decodeAndExtractData(encodedData);
 
             // send links to login/register endpoints here
-            if(!isActivationCodeValid(userData))
+            if(!isCodeValid(userData))
                 return Response.ok("This code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
-            UserEntity user = userRepository.find("username=?1", userData.get(0)).firstResult();
+            UserEntity user = userRepository.findUserByUsername(userData.get(0));
 
             user.setStatus("ACTIVE");
             user.setConfirmDateTime(null);
@@ -129,6 +130,29 @@ public class AuthResource {
         } catch (Exception e) {
             e.printStackTrace();
             return Response.status(Response.Status.INTERNAL_SERVER_ERROR).build();
+        }
+    }
+
+    @PUT
+    @Transactional
+    @Path("/reset_password")
+    public Response resetPassword(@QueryParam("code") String encodedData) {
+        try {
+            List<String> userData = Utils.decodeAndExtractData(encodedData);
+
+            if(!isCodeValid(userData))
+                return Response.ok("This code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
+
+            UserEntity existingUser = userRepository.findUserByUsername(userData.get(0));
+
+            existingUser.setPassword(userData.get(1));
+            existingUser.setStatus("ACTIVE");
+            existingUser.setConfirmDateTime(null);
+
+            return Response.ok("Password has been reset successfully.").build();
+        } catch (Exception e) {
+            e.printStackTrace();
+            return Response.ok("Impossible to reset password.").status(Response.Status.INTERNAL_SERVER_ERROR).build();
         }
     }
 
@@ -198,7 +222,7 @@ public class AuthResource {
 
         try {
             String decodedData = Cryptographer.decode(encodedData);
-            System.out.println("decoded-data=" + encodedData);
+            System.out.println("decoded-data=" + decodedData);
 
             StringBuilder builder = new StringBuilder();
             List<String> parts = new ArrayList<>();
@@ -223,8 +247,8 @@ public class AuthResource {
         }
     }
 
-    private boolean isActivationCodeValid(List<String> userData) {
-        if(userData == null || userData.size() != 2)
+    private boolean isCodeValid(List<String> userData) {
+        if(userData == null || userData.isEmpty())
             return false;
 
         /*try {
@@ -245,7 +269,7 @@ public class AuthResource {
 
         String username = userData.get(0);
 
-        UserEntity currentUser = userRepository.find("username=?1", username).firstResult();
+        UserEntity currentUser = userRepository.findUserByUsername(username);
 
         if(currentUser == null || currentUser.getStatus().equals("ACTIVE") || currentUser.getConfirmDateTime() == null)
             return false;

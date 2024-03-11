@@ -13,31 +13,31 @@ import java.util.Base64;
 
 public class Cryptographer {
     private static final String ALGO = "AES";
-    private static final String SECRET_KEY = "PUT_YOUR_SECRET_KEY_HERE";
+    private static final String SECRET_KEY = "MySecretKey95";
 
     public static String encode(String data)
             throws NoSuchPaddingException,
             NoSuchAlgorithmException,
             InvalidKeyException,
             IllegalBlockSizeException,
-            BadPaddingException {
+            BadPaddingException, UnsupportedEncodingException {
 
         // Instantiate a cipher with the indicated algorithm for encoding/decoding
         Cipher cipher = Cipher.getInstance(ALGO);
 
         // Create a secret key from the provided key in string format
-        SecretKey secretKey = new SecretKeySpec(Arrays.copyOf(SECRET_KEY.getBytes(StandardCharsets.UTF_8), 16), ALGO);
+        SecretKey secretKey = new SecretKeySpec(Arrays.copyOf(Arrays.copyOf(SECRET_KEY.getBytes(StandardCharsets.UTF_8), 16), 16), ALGO);
 
         // Initialize the cipher in encrypt mode
         cipher.init(Cipher.ENCRYPT_MODE, secretKey);
 
         // Encode data
-        byte[] encodedBytes = cipher.doFinal(data.getBytes());
+        byte[] encodedBytes = cipher.doFinal(data.getBytes(StandardCharsets.UTF_8));
 
         // Transform the encoded data to a form that is safe to pass to a url
         byte[] urlSafeEncodedBytes = Base64.getUrlEncoder().encode(encodedBytes);
 
-        return new String(urlSafeEncodedBytes);
+        return new String(urlSafeEncodedBytes,  "UTF-8");
     }
 
     public static String decode(String encodedData)
@@ -45,7 +45,7 @@ public class Cryptographer {
             NoSuchAlgorithmException,
             InvalidKeyException,
             IllegalBlockSizeException,
-            BadPaddingException {
+            BadPaddingException, UnsupportedEncodingException {
 
         Cipher cipher = Cipher.getInstance(ALGO);
 
@@ -53,10 +53,10 @@ public class Cryptographer {
 
         cipher.init(Cipher.DECRYPT_MODE, secretKey);
 
-        byte[] base64DecodedBytes = Base64.getUrlDecoder().decode(encodedData);
+        byte[] base64DecodedBytes = Base64.getUrlDecoder().decode(encodedData.getBytes(StandardCharsets.UTF_8));
 
         byte[] decodedBytes = cipher.doFinal(base64DecodedBytes);
 
-        return new String(decodedBytes);
+        return new String(decodedBytes,  "UTF-8");
     }
 }
