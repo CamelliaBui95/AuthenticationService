@@ -9,12 +9,14 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-public class ResponseUser {
+public class UserDto {
     @JsonProperty(index = 1)
     private Integer id;
 
@@ -34,7 +36,7 @@ public class ResponseUser {
     @JsonInclude(JsonInclude.Include.NON_ABSENT)
     private String role;
 
-    public ResponseUser(UserEntity userEntity, boolean withRole) {
+    public UserDto(UserEntity userEntity, boolean withRole) {
         this.id = userEntity.getId();
         this.firstName = userEntity.getFirstName();
         this.lastName = userEntity.getLastName();
@@ -43,5 +45,14 @@ public class ResponseUser {
 
         if(withRole)
             this.role = userEntity.getRole();
+    }
+
+    public static List<UserDto> toDtoList(List<UserEntity> userEntities) {
+        List<UserDto> userDtos = new ArrayList<>();
+
+        for(UserEntity userEntity : userEntities)
+            userDtos.add(new UserDto(userEntity, false));
+
+        return userDtos;
     }
 }

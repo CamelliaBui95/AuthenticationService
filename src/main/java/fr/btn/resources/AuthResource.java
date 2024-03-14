@@ -6,7 +6,6 @@ import fr.btn.dtos.NewUser;
 import fr.btn.entities.UserEntity;
 import fr.btn.repositories.UserRepository;
 import fr.btn.securityUtils.Argon2;
-import fr.btn.securityUtils.Cryptographer;
 import fr.btn.securityUtils.TokenUtil;
 import fr.btn.services.MailService;
 import fr.btn.utils.Utils;
@@ -22,9 +21,7 @@ import java.net.URI;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
 
 @Path("/auth")
 @Produces(MediaType.APPLICATION_JSON)
@@ -32,10 +29,16 @@ import java.util.List;
 public class AuthResource {
     @Context
     UriInfo request;
+    private static final String API_KEY = "TEwLHA9MSRGeis1d";
+    private Set<String> statusConstraints;
 
-    private static final String API_KEY = "TEwLHA9MSQ1UFJzcHVScmJzVStaMllpaXQzYUNBJGRWdTIyY3hyb0Q1ZGdn";
+    public AuthResource() {
+        this.statusConstraints = new HashSet<>();
 
-    private static final int EXP_IN_MILLIS = 3 * 60 * 1000;
+        statusConstraints.add("PENDING");
+        statusConstraints.add("INACTIVE");
+    }
+
     @Inject
     @RestClient
     MailService mailService;
@@ -48,21 +51,26 @@ public class AuthResource {
     @PermitAll
     @Transactional
     @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.TEXT_PLAIN)
     public Response register(NewUser newUser) {
         if(newUser == null)
             return Response.status(Response.Status.BAD_REQUEST).build();
 
-        if(!isEmailValid(newUser.getEmail()))
-            return Response.ok("Invalid Email.").status(Response.Status.BAD_REQUEST).build();
+        Response emailValidationRes = isEmailValid(newUser.getEmail());
+        if(emailValidationRes.getStatus() != 200)
+            return emailValidationRes;
 
         if(!isUsernameValid(newUser.getUsername()))
             return Response.ok("Invalid Username.").status(Response.Status.BAD_REQUEST).build();
 
-        UserEntity userEntity = NewUser.toUserEntity(newUser);
+        if(!isPasswordValid(newUser.getPassword()))
+            return Response.ok("Invalid password.").status(Response.Status.BAD_REQUEST).build();
 
-        userRepository.persist(userEntity);
+        String username = newUser.getUsername();
+        String password = Argon2.getHashedPassword(newUser.getPassword());
+        String email = newUser.getEmail();
 
-        List<String> userData = Arrays.asList(userEntity.getUsername(), userEntity.getRole());
+        List<String> userData = Arrays.asList(username, password, email);
         String encodedActivationStr = Utils.generateEncodedStringWithUserData(userData);
 
         URI uri = UriBuilder
@@ -70,9 +78,11 @@ public class AuthResource {
                 .path("auth/account_confirm")
                 .queryParam("code", encodedActivationStr).build();
 
-        sendMail(newUser.getEmail(), "Account Activation", uri.toString());
 
-        userEntity.setConfirmDateTime(LocalDateTime.now());
+        boolean isSent = sendMail(newUser.getEmail(), "Account Activation", uri.toString());
+
+        if(!isSent)
+            return Response.ok("An error has occurred. Please try again later.").status(Response.Status.INTERNAL_SERVER_ERROR).build();
 
         return Response.ok("Please activate your account by clicking on the link that has been sent to your email.").status(Response.Status.CREATED).build();
     }
@@ -82,33 +92,42 @@ public class AuthResource {
     @Consumes(MediaType.APPLICATION_JSON)
     @Transactional
     public Response login(LoginForm loginForm) {
+        if(loginForm == null)
+            return Response.ok("Username and Password are required").status(Response.Status.BAD_REQUEST).build();
+
         String username = loginForm.getUsername();
         String password = loginForm.getPassword();
 
-        if(loginForm == null || username == null || username.isEmpty() || password == null || password.isEmpty())
-            return Response.status(Response.Status.BAD_REQUEST).build();
+        if(username == null || username.isEmpty())
+            return Response.ok("Username is required.").status(Response.Status.BAD_REQUEST).build();
+
+        if(password == null || password.isEmpty())
+            return Response.ok("Password is required.").status(Response.Status.BAD_REQUEST).build();
 
         // send link to forgotUsername/register here
-        UserEntity foundUser = userRepository.find("username=?1", username).firstResult();
-        if(foundUser == null || foundUser.getStatus().equals("INACTIVE")) // If user is inactive, he hasn't activate his account and so he cannot log in
-            return Response.status(Response.Status.NOT_FOUND).build();
+        UserEntity foundUser = userRepository.findUserByUsername(username);
+        if(foundUser == null)
+            return Response.ok("User does not exist.").status(Response.Status.NOT_FOUND).build();
+
+        Response accessValidatorRes = validateAccess(foundUser);
+        if(accessValidatorRes.getStatus() != 200)
+            return accessValidatorRes;
 
         // send link to forgotPassword here
-        if(!Argon2.validate(password, foundUser.getPassword()))
-            return Response.ok("Password is not correct.").status(Response.Status.NOT_ACCEPTABLE).build();
+        if(!Argon2.validate(password, foundUser.getPassword())) {
+            int numFails = foundUser.getNumFailAttempts() == null ? 0 : foundUser.getNumFailAttempts();
+            foundUser.setNumFailAttempts(numFails + 1);
+            foundUser.setLastAccess(LocalDateTime.now());
 
-        List<String> userData = Arrays.asList(foundUser.getUsername(), foundUser.getRole());
-        String confirmCode = Utils.generateEncodedStringWithUserData(userData);
+            return Response.ok("Incorrect Password.").status(Response.Status.NOT_ACCEPTABLE).build();
+        }
 
-        foundUser.setStatus("LOCKED");
-        foundUser.setConfirmDateTime(LocalDateTime.now());
+        int codePin = generateUniquePinCode();
 
-        URI uri = UriBuilder
-                .fromUri(request.getBaseUri())
-                .path("auth/account_confirm")
-                .queryParam("code", confirmCode).build();
+        sendMail(foundUser.getEmail(), "Access Pin Code", Integer.toString(codePin));
 
-        sendMail(foundUser.getEmail(), "Confirm Login", uri.toString());
+        foundUser.setLastAccess(LocalDateTime.now());
+        foundUser.setPinCode(codePin);
 
         return Response.ok("Please check your email and confirm your login.").build();
     }
@@ -116,77 +135,172 @@ public class AuthResource {
     @GET
     @Transactional
     @Path("/account_confirm")
-    public Response confirmAccount(@QueryParam("code") String encodedData) {
+    @Produces(MediaType.TEXT_PLAIN)
+    public Response activateAccount(@QueryParam("code") String encodedData) {
         try {
             List<String> userData = Utils.decodeAndExtractData(encodedData);
 
-            // send links to login/register endpoints here
-            if(!isCodeValid(userData))
+            if(userData == null || userData.size() != 4)
+                return Response.ok("Invalid code").status(Response.Status.NOT_ACCEPTABLE).build();
+
+            String username = userData.get(0);
+            String password = userData.get(1);
+            String email = userData.get(2);
+            long createdTime = Long.parseLong(userData.get(3));
+
+            if(!isUsernameValid(username))
+                return Response.ok("Invalid code.").status(Response.Status.NOT_ACCEPTABLE).build();
+
+            if(!Utils.isCodeExpired(createdTime))
                 return Response.ok("This code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
-            UserEntity user = userRepository.findUserByUsername(userData.get(0));
+            if(userRepository.countByUsername(username) > 0)
+                return Response.ok("This account is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
-            user.setStatus("ACTIVE");
-            user.setConfirmDateTime(null);
+            UserEntity userEntity = UserEntity
+                    .builder()
+                    .username(username)
+                    .password(password)
+                    .email(email)
+                    .role("USER")
+                    .status("ACTIVE")
+                    .build();
 
-            String token = TokenUtil.generateJwt(user.getUsername(), user.getRole());
+            userRepository.persist(userEntity);
 
-            return Response.ok().header(HttpHeaders.AUTHORIZATION, token).build();
+            return Response.ok("Account has been successfully activated.").build();
 
         } catch (Exception e) {
             e.printStackTrace();
-            return Response.status(Response.Status.INTERNAL_SERVER_ERROR).build();
+            return Response.ok("An error has occurred.").status(Response.Status.INTERNAL_SERVER_ERROR).build();
         }
+    }
+
+    @POST
+    @Transactional
+    @Path("/login_confirm")
+    @Produces(MediaType.TEXT_PLAIN)
+    public Response confirmLogin(@FormParam("username") String username, @FormParam("password") String password, @FormParam("pin_code") Integer pinCode) {
+        if(username == null || password == null || pinCode == null)
+            return Response.ok("Invalid data.").status(Response.Status.BAD_REQUEST).build();
+
+        UserEntity foundUser = userRepository.findUserByUsername(username);
+        if(foundUser == null)
+            return Response.ok("User does not exist.").status(Response.Status.BAD_REQUEST).build();
+
+        Response accessValidatorRes = validateAccess(foundUser);
+        if(accessValidatorRes.getStatus() != 200)
+            return accessValidatorRes;
+
+        if(!Argon2.validate(password, foundUser.getPassword())) {
+            int numFails = foundUser.getNumFailAttempts() == null ? 0 : foundUser.getNumFailAttempts();
+            foundUser.setNumFailAttempts(numFails + 1);
+            foundUser.setLastAccess(LocalDateTime.now());
+
+            return Response.ok("Incorrect Password.").status(Response.Status.NOT_ACCEPTABLE).build();
+        }
+
+        if(foundUser.getPinCode() == null)
+            return Response.ok("Code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
+
+        if(!Objects.equals(foundUser.getPinCode(), pinCode)) {
+            int numFails = foundUser.getNumFailAttempts() == null ? 0 : foundUser.getNumFailAttempts();
+            foundUser.setNumFailAttempts(numFails + 1);
+            foundUser.setLastAccess(LocalDateTime.now());
+
+            return Response.ok("Incorrect Pin Code.").status(Response.Status.NOT_ACCEPTABLE).build();
+        }
+
+        Instant lastAccessInstant = foundUser.getLastAccess().atZone(ZoneId.systemDefault()).toInstant();
+        if(Utils.isCodeExpired(lastAccessInstant.toEpochMilli()))
+            return Response.ok("Code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
+
+        foundUser.setNumFailAttempts(0);
+        foundUser.setPinCode(null);
+        foundUser.setLastAccess(LocalDateTime.now());
+
+        String token = TokenUtil.generateJwt(username, foundUser.getRole());
+
+        return Response.ok("Access Granted.").header(HttpHeaders.AUTHORIZATION, token).build();
     }
 
     @PUT
     @Transactional
     @Path("/reset_password")
     public Response resetPassword(@QueryParam("code") String encodedData) {
-        try {
+        /*try {
             List<String> userData = Utils.decodeAndExtractData(encodedData);
 
-            if(!isCodeValid(userData))
+            if(!isUsernameValid(userData.get(0)))
+                return Response.ok("Invalid code.").status(Response.Status.NOT_ACCEPTABLE).build();
+
+            if(!Utils.isCodeExpired(Long.parseLong(userData.get(userData.size() - 1))))
                 return Response.ok("This code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
             UserEntity existingUser = userRepository.findUserByUsername(userData.get(0));
 
             existingUser.setPassword(userData.get(1));
             existingUser.setStatus("ACTIVE");
-            existingUser.setConfirmDateTime(null);
 
             return Response.ok("Password has been reset successfully.").build();
         } catch (Exception e) {
             e.printStackTrace();
             return Response.ok("Impossible to reset password.").status(Response.Status.INTERNAL_SERVER_ERROR).build();
-        }
+        }*/
+        return null;
     }
 
 
-    private boolean isEmailValid(String email) {
+    private Response isEmailValid(String email) {
         if(email == null || email.isEmpty())
-            return false;
+            return Response.ok("Email is required.").status(Response.Status.BAD_REQUEST).build();
 
-        UserEntity foundUser = userRepository.find("email=?1", email).firstResult();
+        if(!Utils.validateEmail(email))
+            return Response.ok("Invalid Email.").status(Response.Status.BAD_REQUEST).build();
 
-        if(foundUser != null && foundUser.getStatus().equals("INACTIVE") && isAccountExpired(foundUser))
-            return userRepository.deleteById(foundUser.getId());
+        UserEntity foundUser = userRepository.findUserByEmail(email);
 
-        return foundUser == null;
+        if(foundUser != null)
+            return Response.ok("This email is already registered.").status(Response.Status.BAD_REQUEST).build();
+
+        return Response.ok().build();
     }
-
     private boolean isUsernameValid(String username) {
         if(username == null || username.isEmpty())
             return false;
 
-        UserEntity foundUser = userRepository.findUserByUsername(username);
+        if(!Utils.validateUsername(username))
+            return false;
 
-        if(foundUser != null && foundUser.getStatus().equals("INACTIVE") && isAccountExpired(foundUser))
-            return userRepository.deleteById(foundUser.getId());
+        long count = userRepository.countByUsername(username);
 
-        return foundUser == null;
+        return count == 0;
     }
+    private boolean isPasswordValid(String password) {
+        return password != null && password.length() >= 8;
+    }
+    private Response validateAccess(UserEntity user) {
+        if(user.getNumFailAttempts() == null)
+            return Response.ok().build();
 
+        LocalDateTime lastAccess = user.getLastAccess();
+        int nbFails = user.getNumFailAttempts();
+        int nbAttemptsMax = 3;
+
+        if(nbFails < nbAttemptsMax)
+            return Response.ok().build();
+
+        int lockedMinutes = (nbFails - nbAttemptsMax + 1) * 10;
+
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime lockedUntil = lastAccess.plusMinutes(lockedMinutes);
+
+        boolean canAccess = now.isAfter(lockedUntil);
+        if(canAccess)
+            return Response.ok().build();
+
+        return Response.ok("Your account is locked until " + lockedUntil).status(Response.Status.FORBIDDEN).build();
+    }
 
     private boolean sendMail(String recipient, String subject, String content) {
         MailClient mailClient = MailClient
@@ -206,51 +320,22 @@ public class AuthResource {
         return true;
     }
 
-    private boolean isCodeValid(List<String> userData) {
-        if(userData == null || userData.isEmpty())
-            return false;
+    private int generateUniquePinCode() {
+        int pinCode;
 
-        /*try {
-            String username = userData.get(0);
-            long expInMilliSecs = Long.parseLong(userData.get(2));
+        do {
+            pinCode = Utils.generateCodePin(4);
+        } while(userRepository.count("pinCode=?1", pinCode) != 0);
 
-            Calendar calendar = Calendar.getInstance();
-            long nowInMilliSecs = calendar.getTimeInMillis();
-
-            if(expInMilliSecs - nowInMilliSecs <= 0)
-                return false;
-
-            return userRepository.count("username=?1", username) == 1;
-        } catch (Exception e) {
-            e.printStackTrace();
-            return false;
-        }*/
-
-        String username = userData.get(0);
-
-        UserEntity currentUser = userRepository.findUserByUsername(username);
-
-        if(currentUser == null || currentUser.getStatus().equals("ACTIVE") || currentUser.getConfirmDateTime() == null)
-            return false;
-
-        return !isAccountExpired(currentUser);
+        return pinCode;
     }
 
-    private boolean isAccountExpired(UserEntity account) {
-        LocalDateTime start = account.getConfirmDateTime();
-
-        if(start == null)
-            return false;
-
-        LocalDateTime end = LocalDateTime.now();
-
-        Instant startInstant = start.atZone(ZoneId.systemDefault()).toInstant();
-        Instant endInstant = end.atZone(ZoneId.systemDefault()).toInstant();
-
-        return endInstant.toEpochMilli() - startInstant.toEpochMilli() >= EXP_IN_MILLIS;
-    }
 }
 
-// CASE 1 : User signs up => code is sent => he activates it on time
-// CASE 2 : User signs up => code is sent => he misses the deadline
-// CASE 3 : User signs up => code is sent => he never activates the code => record should be deleted
+//Account activation
+    // CASE 1 : User signs up => code is sent => he activates it on time
+    // CASE 2 : User signs up => code is sent => he misses the deadline
+//Login
+    // CASE 1 : User enters correct password => code pin sent => he enters the code pin within the time limit.
+    // CASE 2 : User enters correct password => code pin sent => he enters the code pin too late.
+    // CASE 3 : User enters incorrect password => augment counter

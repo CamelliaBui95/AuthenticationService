@@ -26,7 +26,7 @@ public class Cryptographer {
         Cipher cipher = Cipher.getInstance(ALGO);
 
         // Create a secret key from the provided key in string format
-        SecretKey secretKey = new SecretKeySpec(Arrays.copyOf(Arrays.copyOf(SECRET_KEY.getBytes(StandardCharsets.UTF_8), 16), 16), ALGO);
+        SecretKey secretKey = new SecretKeySpec(Arrays.copyOf(SECRET_KEY.getBytes(StandardCharsets.UTF_8), 16), ALGO);
 
         // Initialize the cipher in encrypt mode
         cipher.init(Cipher.ENCRYPT_MODE, secretKey);

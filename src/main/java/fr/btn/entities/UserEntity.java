@@ -45,6 +45,12 @@ public class UserEntity {
     @Column(name="STATUS")
     private String status;
 
-    @Column(name="CONFIRM_DATE_TIME")
-    private LocalDateTime confirmDateTime;
+    @Column(name="CODE_PIN")
+    private Integer pinCode;
+
+    @Column(name="LAST_ACCESS")
+    private LocalDateTime lastAccess;
+
+    @Column(name="NBRE_FAIL_ATTEMPTS")
+    private Integer numFailAttempts;
 }

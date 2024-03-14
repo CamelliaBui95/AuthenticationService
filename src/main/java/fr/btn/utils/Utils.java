@@ -1,6 +1,5 @@
 package fr.btn.utils;
 
-import fr.btn.entities.UserEntity;
 import fr.btn.securityUtils.Cryptographer;
 
 import java.time.Instant;
@@ -8,6 +7,8 @@ import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Random;
+import java.util.regex.Pattern;
 
 
 public class Utils {
@@ -21,10 +22,16 @@ public class Utils {
 
         long expInMilliseconds = calendar.getTimeInMillis();*/
 
+        Instant now = LocalDateTime.now().atZone(ZoneId.systemDefault()).toInstant();
+
         StringBuilder stringBuilder = new StringBuilder();
 
         for(String part : data)
             stringBuilder.append(part + "|");
+
+        stringBuilder.append(now.toEpochMilli());
+        stringBuilder.append('|');
+
     try {
             return Cryptographer.encode(stringBuilder.toString());
         } catch (Exception e) {
@@ -34,12 +41,19 @@ public class Utils {
 
     }
 
+    public static int generateCodePin(int length) {
+        Random rnd = new Random();
+
+        int start = (int) Math.pow(10, (double)(length - 1));
+        int end = (int) Math.pow(10, length);
+
+        return rnd.nextInt(start, end);
+    }
+
     public static List<String> decodeAndExtractData(String encodedData) {
-        //System.out.println("encoded-data=" + encodedData);
 
         try {
             String decodedData = Cryptographer.decode(encodedData);
-            //System.out.println("decoded-data=" + decodedData);
 
             StringBuilder builder = new StringBuilder();
             List<String> parts = new ArrayList<>();
@@ -64,7 +78,7 @@ public class Utils {
         }
     }
 
-    public static boolean isAccountExpired(UserEntity account) {
+    /*public static boolean isAccountExpired(UserEntity account) {
         LocalDateTime start = account.getConfirmDateTime();
 
         if(start == null)
@@ -76,5 +90,28 @@ public class Utils {
         Instant endInstant = end.atZone(ZoneId.systemDefault()).toInstant();
 
         return endInstant.toEpochMilli() - startInstant.toEpochMilli() >= EXP_IN_MILLIS;
+    }*/
+
+    public static boolean isCodeExpired(long limit) {
+        Instant now = LocalDateTime.now().atZone(ZoneId.systemDefault()).toInstant();
+        long nowInMillis = now.toEpochMilli();
+
+        return nowInMillis - limit > EXP_IN_MILLIS;
     }
+
+    public static boolean validateEmail(String email) {
+        String pattern = "^(?=.{1,64}@)[A-Za-z0-9_-]+(\\.[A-Za-z0-9_-]+)*@"
+                + "[^-][A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*(\\.[A-Za-z]{2,})$";
+
+        return Pattern.compile(pattern).matcher(email).matches();
+    }
+
+    public static boolean validateUsername(String username) {
+        String pattern = "^[a-zA-Z0-9]([._-](?![._-])|[a-zA-Z0-9]){3,18}[a-zA-Z0-9]$";
+
+        return Pattern.compile(pattern).matcher(username).matches();
+    }
+
+
+
 }

@@ -13,4 +13,8 @@ public class UserRepository implements PanacheRepositoryBase<UserEntity, Integer
     public UserEntity findUserByEmail(String email) {
         return find("email=?1", email).firstResult();
     }
+
+    public long countByUsername(String username) {
+        return count("username=?1", username);
+    }
 }

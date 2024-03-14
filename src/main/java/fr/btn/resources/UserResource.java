@@ -19,15 +19,12 @@ import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 
 import java.net.URI;
-import java.security.Principal;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @SecurityScheme(
         scheme = "bearer",
@@ -53,15 +50,13 @@ public class UserResource {
     @Inject
     JsonWebToken jwt;
 
-    @GET
-    @Path("/all")
-    @RolesAllowed("ADMIN")
-    @Produces(MediaType.TEXT_PLAIN)
-    public Response getUsers() {
-        String subject = jwt.getSubject();
-        System.out.println("Subject=" + subject);
+    private Set<String> statusConstraints;
 
-        return Response.ok(subject).build();
+    public UserResource() {
+        this.statusConstraints = new HashSet<>();
+
+        statusConstraints.add("PENDING");
+        statusConstraints.add("INACTIVE");
     }
 
     @POST
@@ -75,8 +70,8 @@ public class UserResource {
 
         UserEntity existingUser = userRepository.findUserByUsername(username);
         // Send link to register endpoint here
-        if(existingUser == null || existingUser.getStatus().equals("INACTIVE"))
-            return Response.ok("User does not exist.").status(Response.Status.NOT_FOUND).build();
+        if(existingUser == null || statusConstraints.contains(existingUser.getStatus()))
+            return Response.status(Response.Status.NOT_FOUND).build();
 
         String hashedPassword = Argon2.getHashedPassword(newPassword);
 
@@ -90,7 +85,6 @@ public class UserResource {
 
         sendMail(existingUser.getEmail(), "Confirm to reset password", uri.toString());
 
-        existingUser.setConfirmDateTime(LocalDateTime.now());
         existingUser.setStatus("LOCKED");
 
         return Response.ok("Please confirm your request to reset password by clicking on the link that has been sent to your email.").build();
@@ -109,11 +103,11 @@ public class UserResource {
         String password = form.getPassword();
 
         UserEntity existingUser = userRepository.findUserByEmail(email);
-        if(existingUser == null || existingUser.getStatus().equals("INACTIVE"))
-            return Response.ok("User does not exist.").status(Response.Status.NOT_FOUND).build();
+        if(existingUser == null || statusConstraints.contains(existingUser.getStatus()))
+            return Response.status(Response.Status.NOT_FOUND).build();
 
         if(!Argon2.validate(password, existingUser.getPassword()))
-            return Response.ok("Invalid Password.").status(Response.Status.NOT_ACCEPTABLE).build();
+            return Response.ok("Incorrect Password.").status(Response.Status.NOT_ACCEPTABLE).build();
 
         sendMail(existingUser.getEmail(), "Your username", existingUser.getUsername());
 
@@ -136,8 +130,8 @@ public class UserResource {
         String newPassword = form.getNewPassword();
 
         UserEntity existingUser = userRepository.findUserByUsername(username);
-        if(existingUser == null || existingUser.getStatus().equals("INACTIVE"))
-            return Response.ok("User does not exist.").status(Response.Status.NOT_FOUND).build();
+        if(existingUser == null || statusConstraints.contains(existingUser.getStatus()))
+            return Response.status(Response.Status.NOT_FOUND).build();
 
         if(!Argon2.validate(currentPassword, existingUser.getPassword()))
             return Response.ok("Incorrect Password.").status(Response.Status.NOT_ACCEPTABLE).build();
@@ -159,7 +153,7 @@ public class UserResource {
 
         UserEntity existingUser = userRepository.findUserByUsername(username);
 
-        if(existingUser == null)
+        if(existingUser == null || statusConstraints.contains(existingUser.getStatus()))
             return Response.status(Response.Status.NOT_FOUND).build();
 
         String firstName = dataForm.getFirstName();
@@ -176,7 +170,7 @@ public class UserResource {
         if(birthdate != null)
             existingUser.setBirthdate(birthdate);
 
-        return Response.ok(new ResponseUser(existingUser, false)).build();
+        return Response.ok(new UserDto(existingUser, false)).build();
     }
 
     private boolean sendMail(String recipient, String subject, String content) {
@@ -203,7 +197,7 @@ public class UserResource {
 
         UserEntity foundUser = userRepository.findUserByUsername(username);
 
-        if(foundUser != null && foundUser.getStatus().equals("INACTIVE") && Utils.isAccountExpired(foundUser))
+        if(foundUser != null && foundUser.getStatus().equals("PENDING"))
             return userRepository.deleteById(foundUser.getId());
 
         return foundUser == null;
