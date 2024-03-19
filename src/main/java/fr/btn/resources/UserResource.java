@@ -2,16 +2,20 @@ package fr.btn.resources;
 
 import fr.btn.dtos.*;
 import fr.btn.entities.UserEntity;
+import fr.btn.hateos.HateOs;
 import fr.btn.repositories.UserRepository;
 import fr.btn.securityUtils.Argon2;
 import fr.btn.services.MailService;
 import fr.btn.utils.Utils;
+import fr.btn.utils.Validator;
+import io.vertx.ext.auth.User;
 import jakarta.annotation.security.PermitAll;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.*;
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.eclipse.microprofile.jwt.JsonWebToken;
 import org.eclipse.microprofile.openapi.annotations.enums.SecuritySchemeType;
 import org.eclipse.microprofile.openapi.annotations.security.SecurityScheme;
@@ -31,11 +35,11 @@ import java.util.Set;
         type = SecuritySchemeType.HTTP,
         bearerFormat = "JWT"
 )
-@Path("/user")
+@Path("/users")
 @Tag(name="User")
 @Produces(MediaType.APPLICATION_JSON)
 public class UserResource {
-    private static final String API_KEY = "TEwLHA9MSQ1UFJzcHVScmJzVStaMllpaXQzYUNBJGRWdTIyY3hyb0Q1ZGdn";
+    private static final String API_KEY = ConfigProvider.getConfig().getValue("app-config.api-key", String.class);
 
     @Context
     UriInfo request;
@@ -50,28 +54,53 @@ public class UserResource {
     @Inject
     JsonWebToken jwt;
 
-    private Set<String> statusConstraints;
+    @PUT
+    @Path("/promote")
+    @RolesAllowed("ADMIN")
+    public Response promoteUser(@QueryParam("username") String username) {
+        if(!Validator.validateUsername(username))
+            return Response.ok("Invalid Username.").status(Response.Status.BAD_REQUEST).build();
 
-    public UserResource() {
-        this.statusConstraints = new HashSet<>();
+        UserEntity existingUser = userRepository.findUserByUsername(username);
+        if(existingUser == null)
+            return Response.ok("User not found.").status(Response.Status.NOT_FOUND).build();
 
-        statusConstraints.add("PENDING");
-        statusConstraints.add("INACTIVE");
+        existingUser.setRole("ADMIN");
+
+        return Response.ok().build();
+    }
+
+    @GET
+    @Path("/all_users")
+    @RolesAllowed("ADMIN")
+    public Response getAll() {
+        List<UserEntity> userEntities = userRepository.listAll();
+
+        return Response.ok(UserDto.toDtoList(userEntities)).build();
     }
 
     @POST
-    @Path("{username}/request_reset_password")
-    @Consumes(MediaType.TEXT_PLAIN)
+    @Path("{username}/forgot_password")
+    @Produces(MediaType.TEXT_PLAIN)
     @Transactional
-    @PermitAll
-    public Response requestResetPassword(@PathParam("username") String username, String newPassword) {
-        if(username == null || username.isEmpty() || newPassword == null || newPassword.isEmpty())
-            return Response.ok("Username or New Password is invalid.").status(Response.Status.BAD_REQUEST).build();
+    public Response requestResetPassword(@PathParam("username") String username, @FormParam("new_password") String newPassword) {
+        if(!Validator.validatePassword(newPassword))
+            return Response.ok("Password is invalid.").status(Response.Status.BAD_REQUEST).build();
 
         UserEntity existingUser = userRepository.findUserByUsername(username);
         // Send link to register endpoint here
-        if(existingUser == null || statusConstraints.contains(existingUser.getStatus()))
-            return Response.status(Response.Status.NOT_FOUND).build();
+
+//        UriBuilder builder = UriBuilder.fromUri(request.getBaseUri());
+//        HateOs hateOs = new HateOs();
+//
+//        hateOs.addLink("Forgot Username", HttpMethod.GET, builder.build());
+
+        if(existingUser == null)
+            return Response.ok("User does not exist.").status(Response.Status.NOT_FOUND).build();
+
+        Response canAccessRes = Validator.validateAccess(existingUser);
+        if(canAccessRes.getStatus() != 200)
+            return canAccessRes;
 
         String hashedPassword = Argon2.getHashedPassword(newPassword);
 
@@ -80,34 +109,25 @@ public class UserResource {
 
         URI uri = UriBuilder
                 .fromUri(request.getBaseUri())
-                .path("auth/reset_password")
+                .path("auth/confirm_reset_password")
                 .queryParam("code", confirmCode).build();
 
         sendMail(existingUser.getEmail(), "Confirm to reset password", uri.toString());
-
-        existingUser.setStatus("LOCKED");
 
         return Response.ok("Please confirm your request to reset password by clicking on the link that has been sent to your email.").build();
     }
 
     @POST
-    @Path("/forgot_login")
-    @Consumes(MediaType.APPLICATION_JSON)
+    @Path("/forgot_username")
+    @Produces(MediaType.TEXT_PLAIN)
     @Transactional
-    @PermitAll
-    public Response requestUsername(UsernameRequestForm form) {
-        if(form == null || form.getEmail() == null|| form.getPassword() == null)
-            return Response.ok("Invalid data.").status(Response.Status.BAD_REQUEST).build();
-
-        String email = form.getEmail();
-        String password = form.getPassword();
+    public Response requestUsername(@FormParam("email") String email) {
+        if(!Validator.validateEmail(email))
+            return Response.ok("A valid email is required.").status(Response.Status.BAD_REQUEST).build();
 
         UserEntity existingUser = userRepository.findUserByEmail(email);
-        if(existingUser == null || statusConstraints.contains(existingUser.getStatus()))
-            return Response.status(Response.Status.NOT_FOUND).build();
-
-        if(!Argon2.validate(password, existingUser.getPassword()))
-            return Response.ok("Incorrect Password.").status(Response.Status.NOT_ACCEPTABLE).build();
+        if(existingUser == null)
+            return Response.ok("User not found.").status(Response.Status.NOT_FOUND).build();
 
         sendMail(existingUser.getEmail(), "Your username", existingUser.getUsername());
 
@@ -115,27 +135,34 @@ public class UserResource {
     }
 
     @POST
-    @Path("{username}/request_modify_password")
+    @Path("{username}/modify_password")
     @Consumes(MediaType.APPLICATION_JSON)
+    @Produces(MediaType.TEXT_PLAIN)
     @Transactional
     @RolesAllowed({"USER", "ADMIN"})
-    public Response modifyPassword(@PathParam("username") String username, NewPasswordRqForm form) {
-        if(form == null || form.getPassword() == null || form.getNewPassword() == null || form.getNewPassword().isEmpty())
-            return Response.ok("Invalid data.").status(Response.Status.BAD_REQUEST).build();
+    public Response modifyPassword(@PathParam("username") String username, @FormParam("password") String password ,@FormParam("new_password") String newPassword) {
+        if(!Validator.validateUsername(username))
+            return Response.ok("Invalid Username.").status(Response.Status.BAD_REQUEST).build();
 
-        if(!username.equals(jwt.getSubject()))
-            return Response.ok("Invalid username.").status(Response.Status.BAD_REQUEST).build();
-
-        String currentPassword = form.getPassword();
-        String newPassword = form.getNewPassword();
+        if(!Validator.validatePassword(newPassword))
+            return Response.ok("New password is invalid.").status(Response.Status.BAD_REQUEST).build();
 
         UserEntity existingUser = userRepository.findUserByUsername(username);
-        if(existingUser == null || statusConstraints.contains(existingUser.getStatus()))
-            return Response.status(Response.Status.NOT_FOUND).build();
+        if(existingUser == null)
+            return Response.ok("User not found.").status(Response.Status.NOT_FOUND).build();
 
-        if(!Argon2.validate(currentPassword, existingUser.getPassword()))
-            return Response.ok("Incorrect Password.").status(Response.Status.NOT_ACCEPTABLE).build();
+        Response canAccessRes = Validator.validateAccess(existingUser);
+        if(canAccessRes.getStatus() != 200)
+            return canAccessRes;
 
+        if(!Argon2.validate(password, existingUser.getPassword())) {
+            int numFails = existingUser.getNumFailAttempts() == null ? 0 : existingUser.getNumFailAttempts();
+            existingUser.setNumFailAttempts(numFails + 1);
+            existingUser.setLastAccess(LocalDateTime.now());
+
+            return Response.ok("Incorrect Password.").status(Response.Status.FORBIDDEN).build();
+        }
+        
         return requestResetPassword(username, newPassword);
     }
 
@@ -145,28 +172,28 @@ public class UserResource {
     @Transactional
     @RolesAllowed({"USER", "ADMIN"})
     public Response modifyUserData(@PathParam("username") String username, UserDataForm dataForm) {
-        if(!username.equals(jwt.getSubject()))
-            return Response.ok("Invalid username.").status(Response.Status.BAD_REQUEST).build();
+        if(!Validator.validateUsername(username) || !jwt.getSubject().equals(username))
+            return Response.ok("Invalid Username.").status(Response.Status.BAD_REQUEST).build();
 
         if(dataForm == null)
             return Response.ok("Invalid data.").status(Response.Status.BAD_REQUEST).build();
 
         UserEntity existingUser = userRepository.findUserByUsername(username);
-
-        if(existingUser == null || statusConstraints.contains(existingUser.getStatus()))
+        if(existingUser == null)
             return Response.status(Response.Status.NOT_FOUND).build();
+
+        Response canAccessRes = Validator.validateAccess(existingUser);
+        if(canAccessRes.getStatus() != 200)
+            return canAccessRes;
 
         String firstName = dataForm.getFirstName();
         String lastName = dataForm.getLastName();
-        String newUsername = dataForm.getUsername();
         LocalDate birthdate = dataForm.getBirthdate();
 
         if(firstName != null && !firstName.isEmpty())
             existingUser.setFirstName(firstName);
         if(lastName != null && !lastName.isEmpty())
             existingUser.setLastName(lastName);
-        if (isUsernameValid(newUsername))
-            existingUser.setUsername(newUsername);
         if(birthdate != null)
             existingUser.setBirthdate(birthdate);
 
@@ -189,18 +216,6 @@ public class UserResource {
             return false;
         }
         return true;
-    }
-
-    private boolean isUsernameValid(String username) {
-        if(username == null || username.isEmpty())
-            return false;
-
-        UserEntity foundUser = userRepository.findUserByUsername(username);
-
-        if(foundUser != null && foundUser.getStatus().equals("PENDING"))
-            return userRepository.deleteById(foundUser.getId());
-
-        return foundUser == null;
     }
 
 }

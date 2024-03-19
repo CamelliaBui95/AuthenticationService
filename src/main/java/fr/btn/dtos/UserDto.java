@@ -30,6 +30,7 @@ public class UserDto {
     private String username;
 
     @JsonProperty(index = 5)
+    @JsonInclude(JsonInclude.Include.NON_ABSENT)
     private LocalDate birthdate;
 
     @JsonProperty(index = 6)

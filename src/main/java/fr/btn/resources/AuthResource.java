@@ -1,6 +1,5 @@
 package fr.btn.resources;
 
-import fr.btn.dtos.LoginForm;
 import fr.btn.dtos.MailClient;
 import fr.btn.dtos.NewUser;
 import fr.btn.entities.UserEntity;
@@ -9,11 +8,14 @@ import fr.btn.securityUtils.Argon2;
 import fr.btn.securityUtils.TokenUtil;
 import fr.btn.services.MailService;
 import fr.btn.utils.Utils;
+import fr.btn.utils.Validator;
 import jakarta.annotation.security.PermitAll;
+import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.*;
+import org.eclipse.microprofile.config.ConfigProvider;
 import org.eclipse.microprofile.openapi.annotations.tags.Tag;
 import org.eclipse.microprofile.rest.client.inject.RestClient;
 
@@ -29,15 +31,7 @@ import java.util.*;
 public class AuthResource {
     @Context
     UriInfo request;
-    private static final String API_KEY = "TEwLHA9MSRGeis1d";
-    private Set<String> statusConstraints;
-
-    public AuthResource() {
-        this.statusConstraints = new HashSet<>();
-
-        statusConstraints.add("PENDING");
-        statusConstraints.add("INACTIVE");
-    }
+    private static final String API_KEY = ConfigProvider.getConfig().getValue("app-config.api-key", String.class);
 
     @Inject
     @RestClient
@@ -56,14 +50,17 @@ public class AuthResource {
         if(newUser == null)
             return Response.status(Response.Status.BAD_REQUEST).build();
 
+        // email validation
         Response emailValidationRes = isEmailValid(newUser.getEmail());
         if(emailValidationRes.getStatus() != 200)
             return emailValidationRes;
 
+        // username validation
         if(!isUsernameValid(newUser.getUsername()))
             return Response.ok("Invalid Username.").status(Response.Status.BAD_REQUEST).build();
 
-        if(!isPasswordValid(newUser.getPassword()))
+        // password validation
+        if(!Validator.validatePassword(newUser.getPassword()))
             return Response.ok("Invalid password.").status(Response.Status.BAD_REQUEST).build();
 
         String username = newUser.getUsername();
@@ -89,15 +86,9 @@ public class AuthResource {
 
     @POST
     @Path("/login")
-    @Consumes(MediaType.APPLICATION_JSON)
     @Transactional
-    public Response login(LoginForm loginForm) {
-        if(loginForm == null)
-            return Response.ok("Username and Password are required").status(Response.Status.BAD_REQUEST).build();
-
-        String username = loginForm.getUsername();
-        String password = loginForm.getPassword();
-
+    @Produces(MediaType.TEXT_PLAIN)
+    public Response login(@FormParam("username") String username, @FormParam("password") String password) {
         if(username == null || username.isEmpty())
             return Response.ok("Username is required.").status(Response.Status.BAD_REQUEST).build();
 
@@ -109,7 +100,7 @@ public class AuthResource {
         if(foundUser == null)
             return Response.ok("User does not exist.").status(Response.Status.NOT_FOUND).build();
 
-        Response accessValidatorRes = validateAccess(foundUser);
+        Response accessValidatorRes = Validator.validateAccess(foundUser);
         if(accessValidatorRes.getStatus() != 200)
             return accessValidatorRes;
 
@@ -126,6 +117,7 @@ public class AuthResource {
 
         sendMail(foundUser.getEmail(), "Access Pin Code", Integer.toString(codePin));
 
+        foundUser.setNumFailAttempts(0);
         foundUser.setLastAccess(LocalDateTime.now());
         foundUser.setPinCode(codePin);
 
@@ -151,7 +143,7 @@ public class AuthResource {
             if(!isUsernameValid(username))
                 return Response.ok("Invalid code.").status(Response.Status.NOT_ACCEPTABLE).build();
 
-            if(!Utils.isCodeExpired(createdTime))
+            if(Utils.isCodeExpired(createdTime))
                 return Response.ok("This code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
             if(userRepository.countByUsername(username) > 0)
@@ -188,7 +180,7 @@ public class AuthResource {
         if(foundUser == null)
             return Response.ok("User does not exist.").status(Response.Status.BAD_REQUEST).build();
 
-        Response accessValidatorRes = validateAccess(foundUser);
+        Response accessValidatorRes = Validator.validateAccess(foundUser);
         if(accessValidatorRes.getStatus() != 200)
             return accessValidatorRes;
 
@@ -215,8 +207,9 @@ public class AuthResource {
         if(Utils.isCodeExpired(lastAccessInstant.toEpochMilli()))
             return Response.ok("Code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
-        foundUser.setNumFailAttempts(0);
         foundUser.setPinCode(null);
+
+        foundUser.setNumFailAttempts(0);
         foundUser.setLastAccess(LocalDateTime.now());
 
         String token = TokenUtil.generateJwt(username, foundUser.getRole());
@@ -224,38 +217,42 @@ public class AuthResource {
         return Response.ok("Access Granted.").header(HttpHeaders.AUTHORIZATION, token).build();
     }
 
+
     @PUT
     @Transactional
-    @Path("/reset_password")
-    public Response resetPassword(@QueryParam("code") String encodedData) {
-        /*try {
+    @Produces(MediaType.TEXT_PLAIN)
+    @Path("/confirm_reset_password")
+    public Response confirmResetPassword(@QueryParam("code") String encodedData) {
+        try {
             List<String> userData = Utils.decodeAndExtractData(encodedData);
 
-            if(!isUsernameValid(userData.get(0)))
+            if(!Validator.validateUsername(userData.get(0)))
                 return Response.ok("Invalid code.").status(Response.Status.NOT_ACCEPTABLE).build();
 
-            if(!Utils.isCodeExpired(Long.parseLong(userData.get(userData.size() - 1))))
+            UserEntity existingUser = userRepository.findUserByUsername(userData.get(0));
+            if(existingUser == null)
+                return Response.ok("User does not exist.").status(Response.Status.NOT_ACCEPTABLE).build();
+
+            if(Utils.isCodeExpired(Long.parseLong(userData.get(userData.size() - 1))))
                 return Response.ok("This code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
-            UserEntity existingUser = userRepository.findUserByUsername(userData.get(0));
+            Response canAccessRes = Validator.validateAccess(existingUser);
+            if(canAccessRes.getStatus() != 200)
+                return canAccessRes;
 
             existingUser.setPassword(userData.get(1));
-            existingUser.setStatus("ACTIVE");
 
             return Response.ok("Password has been reset successfully.").build();
         } catch (Exception e) {
             e.printStackTrace();
             return Response.ok("Impossible to reset password.").status(Response.Status.INTERNAL_SERVER_ERROR).build();
-        }*/
-        return null;
+        }
     }
-
-
     private Response isEmailValid(String email) {
         if(email == null || email.isEmpty())
             return Response.ok("Email is required.").status(Response.Status.BAD_REQUEST).build();
 
-        if(!Utils.validateEmail(email))
+        if(!Validator.validateEmail(email))
             return Response.ok("Invalid Email.").status(Response.Status.BAD_REQUEST).build();
 
         UserEntity foundUser = userRepository.findUserByEmail(email);
@@ -269,37 +266,12 @@ public class AuthResource {
         if(username == null || username.isEmpty())
             return false;
 
-        if(!Utils.validateUsername(username))
+        if(!Validator.validateUsername(username))
             return false;
 
         long count = userRepository.countByUsername(username);
 
         return count == 0;
-    }
-    private boolean isPasswordValid(String password) {
-        return password != null && password.length() >= 8;
-    }
-    private Response validateAccess(UserEntity user) {
-        if(user.getNumFailAttempts() == null)
-            return Response.ok().build();
-
-        LocalDateTime lastAccess = user.getLastAccess();
-        int nbFails = user.getNumFailAttempts();
-        int nbAttemptsMax = 3;
-
-        if(nbFails < nbAttemptsMax)
-            return Response.ok().build();
-
-        int lockedMinutes = (nbFails - nbAttemptsMax + 1) * 10;
-
-        LocalDateTime now = LocalDateTime.now();
-        LocalDateTime lockedUntil = lastAccess.plusMinutes(lockedMinutes);
-
-        boolean canAccess = now.isAfter(lockedUntil);
-        if(canAccess)
-            return Response.ok().build();
-
-        return Response.ok("Your account is locked until " + lockedUntil).status(Response.Status.FORBIDDEN).build();
     }
 
     private boolean sendMail(String recipient, String subject, String content) {
@@ -329,7 +301,6 @@ public class AuthResource {
 
         return pinCode;
     }
-
 }
 
 //Account activation

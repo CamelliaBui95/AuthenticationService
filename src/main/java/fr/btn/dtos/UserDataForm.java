@@ -24,10 +24,6 @@ public class UserDataForm {
 
     @JsonProperty(index = 3)
     @JsonInclude(JsonInclude.Include.NON_ABSENT)
-    private String username;
-
-    @JsonProperty(index = 4)
-    @JsonInclude(JsonInclude.Include.NON_ABSENT)
     private LocalDate birthdate;
 
 }

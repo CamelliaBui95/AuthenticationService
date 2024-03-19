@@ -33,7 +33,7 @@ public class NewUser {
                 .email(newUser.email)
                 .username(newUser.username)
                 .password(Argon2.getHashedPassword(newUser.password))
-                .status("PENDING")
+                .status("INACTIVE")
                 .build();
     }
 }
