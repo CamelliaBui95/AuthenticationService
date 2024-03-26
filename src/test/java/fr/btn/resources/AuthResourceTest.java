@@ -14,6 +14,7 @@ import jakarta.transaction.Transactional;
 import org.junit.jupiter.api.*;
 import org.mockito.Mockito;
 
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 
@@ -28,26 +29,41 @@ class AuthResourceTest {
     private static final String ENDPOINT = "/auth/";
     @InjectMock
     UserRepository userRepository;
-
-    private static String mockUsername = "TestUsername";
-    private static String mockPassword = "abcd1234";
-    private static String mockEmail = "test@mail.com";
     private static String mockEncodedActivationCode;
+
+    private static UserEntity mockUser;
 
     @BeforeAll
     static void init() {
+        String hashedPassword1 = Argon2.getHashedPassword("testPassword1");
+
+        mockUser = UserEntity
+                .builder()
+                .id(99)
+                .username("TestUser1")
+                .password(hashedPassword1)
+                .email("test1@mail.com")
+                .role("USER")
+                .status("ACTIVE")
+                .pinCode(9999)
+                .lastAccess(LocalDateTime.now())
+                .build();
 
     }
 
     @BeforeEach
     void setUp() {
-
         //Mockito.when(userRepository.findUserByEmail(""))
+        Mockito.when(userRepository.findUserByUsername("TestUser1")).thenReturn(mockUser);
     }
 
     @Test
     @Order(1)
     void testRegisterWithValidData() {
+        String mockUsername = "NewUser";
+        String mockPassword = "abcd1234";
+        String mockEmail = "testNewUser@mail.com";
+
         given()
                 .formParam("email", mockEmail)
                 .formParam("username", mockUsername)
@@ -81,8 +97,8 @@ class AuthResourceTest {
     @Order(3)
     void testLoginWithValidAccount() {
         given()
-                .formParam("username", mockUsername)
-                .formParam("password", mockPassword)
+                .formParam("username", "TestUser1")
+                .formParam("password", "testPassword1")
                 .when()
                 .post(ENDPOINT + "login")
                 .then()
@@ -91,10 +107,10 @@ class AuthResourceTest {
                 .body(is("Please check your email and confirm your login."));
     }
 
-
-
     @Test
-    void confirmLogin() {
+    @Order(4)
+    void testConfirmLoginWithValidData() {
+
     }
 
     @Test
