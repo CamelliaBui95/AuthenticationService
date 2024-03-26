@@ -5,14 +5,12 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import fr.btn.entities.UserEntity;
 import fr.btn.securityUtils.Argon2;
 import io.vertx.ext.auth.User;
-import lombok.AllArgsConstructor;
-import lombok.Builder;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.*;
 
 import java.time.LocalDate;
 
-@Data
+@Setter
+@Getter
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder

@@ -1,7 +1,6 @@
 package fr.btn.resources;
 
 import fr.btn.dtos.MailClient;
-import fr.btn.dtos.NewUser;
 import fr.btn.entities.UserEntity;
 import fr.btn.repositories.UserRepository;
 import fr.btn.securityUtils.Argon2;
@@ -44,30 +43,24 @@ public class AuthResource {
     @Path("/register")
     @PermitAll
     @Transactional
-    @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.TEXT_PLAIN)
-    public Response register(NewUser newUser) {
-        if(newUser == null)
-            return Response.status(Response.Status.BAD_REQUEST).build();
-
+    public Response register(@FormParam("email") String email, @FormParam("username") String username, @FormParam("password") String password) {
         // email validation
-        Response emailValidationRes = isEmailValid(newUser.getEmail());
+        Response emailValidationRes = isEmailValid(email);
         if(emailValidationRes.getStatus() != 200)
             return emailValidationRes;
 
         // username validation
-        if(!isUsernameValid(newUser.getUsername()))
+        if(!isUsernameValid(username))
             return Response.ok("Invalid Username.").status(Response.Status.BAD_REQUEST).build();
 
         // password validation
-        if(!Validator.validatePassword(newUser.getPassword()))
+        if(!Validator.validatePassword(password))
             return Response.ok("Invalid password.").status(Response.Status.BAD_REQUEST).build();
 
-        String username = newUser.getUsername();
-        String password = Argon2.getHashedPassword(newUser.getPassword());
-        String email = newUser.getEmail();
+        String hashedPassword = Argon2.getHashedPassword(password);
 
-        List<String> userData = Arrays.asList(username, password, email);
+        List<String> userData = Arrays.asList(username, hashedPassword, email);
         String encodedActivationStr = Utils.generateEncodedStringWithUserData(userData);
 
         URI uri = UriBuilder
@@ -76,7 +69,7 @@ public class AuthResource {
                 .queryParam("code", encodedActivationStr).build();
 
 
-        boolean isSent = sendMail(newUser.getEmail(), "Account Activation", uri.toString());
+        boolean isSent = sendMail(email, "Account Activation", uri.toString());
 
         if(!isSent)
             return Response.ok("An error has occurred. Please try again later.").status(Response.Status.INTERNAL_SERVER_ERROR).build();

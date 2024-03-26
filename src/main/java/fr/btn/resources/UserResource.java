@@ -88,12 +88,6 @@ public class UserResource {
             return Response.ok("Password is invalid.").status(Response.Status.BAD_REQUEST).build();
 
         UserEntity existingUser = userRepository.findUserByUsername(username);
-        // Send link to register endpoint here
-
-//        UriBuilder builder = UriBuilder.fromUri(request.getBaseUri());
-//        HateOs hateOs = new HateOs();
-//
-//        hateOs.addLink("Forgot Username", HttpMethod.GET, builder.build());
 
         if(existingUser == null)
             return Response.ok("User does not exist.").status(Response.Status.NOT_FOUND).build();
@@ -136,7 +130,6 @@ public class UserResource {
 
     @POST
     @Path("{username}/modify_password")
-    @Consumes(MediaType.APPLICATION_JSON)
     @Produces(MediaType.TEXT_PLAIN)
     @Transactional
     @RolesAllowed({"USER", "ADMIN"})

@@ -7,7 +7,7 @@
 #
 # Then, build the image with:
 #
-# docker build -f src/main/docker/Dockerfile.jvm -t quarkus/authenticationservice-jvm .
+# docker build -f src/main/docker/Dockerfile.jvm -t camelliabui/auth-api .
 #
 # Then run the container using:
 #
