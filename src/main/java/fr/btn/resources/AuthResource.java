@@ -85,7 +85,7 @@ public class AuthResource {
         if(username == null || username.isEmpty())
             return Response.ok("Username is required.").status(Response.Status.BAD_REQUEST).build();
 
-        if(password == null || password.isEmpty())
+        if(!Validator.validatePassword(password))
             return Response.ok("Password is required.").status(Response.Status.BAD_REQUEST).build();
 
         // send link to forgotUsername/register here
@@ -99,9 +99,7 @@ public class AuthResource {
 
         // send link to forgotPassword here
         if(!Argon2.validate(password, foundUser.getPassword())) {
-            int numFails = foundUser.getNumFailAttempts() == null ? 0 : foundUser.getNumFailAttempts();
-            foundUser.setNumFailAttempts(numFails + 1);
-            foundUser.setLastAccess(LocalDateTime.now());
+            evaluateAccessAndFailedAttempts(foundUser);
 
             return Response.ok("Incorrect Password.").status(Response.Status.NOT_ACCEPTABLE).build();
         }
@@ -133,14 +131,12 @@ public class AuthResource {
             String email = userData.get(2);
             long createdTime = Long.parseLong(userData.get(3));
 
-            if(!isUsernameValid(username))
-                return Response.ok("Invalid code.").status(Response.Status.NOT_ACCEPTABLE).build();
+            if(userRepository.countByUsername(username) > 0)
+                return Response.ok("This account is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
             if(Utils.isCodeExpired(createdTime))
                 return Response.ok("This code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
-            if(userRepository.countByUsername(username) > 0)
-                return Response.ok("This account is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
             UserEntity userEntity = UserEntity
                     .builder()
@@ -178,9 +174,7 @@ public class AuthResource {
             return accessValidatorRes;
 
         if(!Argon2.validate(password, foundUser.getPassword())) {
-            int numFails = foundUser.getNumFailAttempts() == null ? 0 : foundUser.getNumFailAttempts();
-            foundUser.setNumFailAttempts(numFails + 1);
-            foundUser.setLastAccess(LocalDateTime.now());
+            evaluateAccessAndFailedAttempts(foundUser);
 
             return Response.ok("Incorrect Password.").status(Response.Status.NOT_ACCEPTABLE).build();
         }
@@ -188,17 +182,15 @@ public class AuthResource {
         if(foundUser.getPinCode() == null)
             return Response.ok("Code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
-        if(!Objects.equals(foundUser.getPinCode(), pinCode)) {
-            int numFails = foundUser.getNumFailAttempts() == null ? 0 : foundUser.getNumFailAttempts();
-            foundUser.setNumFailAttempts(numFails + 1);
-            foundUser.setLastAccess(LocalDateTime.now());
+        Instant lastAccessInstant = foundUser.getLastAccess().atZone(ZoneId.systemDefault()).toInstant();
+        if(Objects.equals(foundUser.getPinCode(), pinCode)) {
+            if(Utils.isCodeExpired(lastAccessInstant.toEpochMilli()))
+                return Response.ok("Code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
+        } else {
+            evaluateAccessAndFailedAttempts(foundUser);
 
             return Response.ok("Incorrect Pin Code.").status(Response.Status.NOT_ACCEPTABLE).build();
         }
-
-        Instant lastAccessInstant = foundUser.getLastAccess().atZone(ZoneId.systemDefault()).toInstant();
-        if(Utils.isCodeExpired(lastAccessInstant.toEpochMilli()))
-            return Response.ok("Code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
 
         foundUser.setPinCode(null);
 
@@ -293,6 +285,14 @@ public class AuthResource {
         } while(userRepository.count("pinCode=?1", pinCode) != 0);
 
         return pinCode;
+    }
+
+    private void evaluateAccessAndFailedAttempts(UserEntity user) {
+        int numFails = user.getNumFailAttempts() == null ? 0 : user.getNumFailAttempts();
+        user.setNumFailAttempts(numFails + 1);
+
+        if(user.getNumFailAttempts() >= 3)
+            user.setLastAccess(LocalDateTime.now());
     }
 }
 
