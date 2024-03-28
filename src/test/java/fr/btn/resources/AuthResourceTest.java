@@ -542,5 +542,45 @@ class AuthResourceTest {
                 .body(is("User does not exist."));
     }
 
+    @Test
+    @Order(24)
+    void testConfirmResetPasswordWithExpiredCode() {
+        String newPassword = "updatedPassword2";
+        String hashedNewPassword = Argon2.getHashedPassword(newPassword);
+
+        List<String> data = Arrays.asList("TestUser2", hashedNewPassword);
+        String confirmCode = TestUtils.generateEncodedStringWithUserData(data, -15);
+
+        given()
+                .when()
+                .put(ENDPOINT + "confirm_reset_password?code=" + confirmCode)
+                .then()
+                .contentType("text/plain")
+                .statusCode(HttpStatus.SC_NOT_ACCEPTABLE)
+                .body(is("This code is expired."));
+    }
+
+    @Test
+    @Order(25)
+    void testConfirmResetPasswordWithInvalidAccess() {
+        String newPassword = "updatedPassword2";
+        String hashedNewPassword = Argon2.getHashedPassword(newPassword);
+
+        List<String> data = Arrays.asList("TestUser2", hashedNewPassword);
+        String confirmCode = TestUtils.generateEncodedStringWithUserData(data, 0);
+
+        String message = given()
+                            .when()
+                            .put(ENDPOINT + "confirm_reset_password?code=" + confirmCode)
+                            .then()
+                            .contentType("text/plain")
+                            .statusCode(HttpStatus.SC_FORBIDDEN)
+                            .extract()
+                            .body()
+                            .asString();
+
+        assertThat("Error message is correct.", message.startsWith("Your account is locked until "));
+    }
+
 
 }
