@@ -2,14 +2,11 @@ package fr.btn.resources;
 
 import fr.btn.dtos.*;
 import fr.btn.entities.UserEntity;
-import fr.btn.hateos.HateOs;
 import fr.btn.repositories.UserRepository;
 import fr.btn.securityUtils.Argon2;
 import fr.btn.services.MailService;
 import fr.btn.utils.Utils;
 import fr.btn.utils.Validator;
-import io.vertx.ext.auth.User;
-import jakarta.annotation.security.PermitAll;
 import jakarta.annotation.security.RolesAllowed;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -149,9 +146,7 @@ public class UserResource {
             return canAccessRes;
 
         if(!Argon2.validate(password, existingUser.getPassword())) {
-            int numFails = existingUser.getNumFailAttempts() == null ? 0 : existingUser.getNumFailAttempts();
-            existingUser.setNumFailAttempts(numFails + 1);
-            existingUser.setLastAccess(LocalDateTime.now());
+            Validator.evaluateAccessAndFailedAttempts(existingUser);
 
             return Response.ok("Incorrect Password.").status(Response.Status.FORBIDDEN).build();
         }
@@ -166,10 +161,10 @@ public class UserResource {
     @RolesAllowed({"USER", "ADMIN"})
     public Response modifyUserData(@PathParam("username") String username, UserDataForm dataForm) {
         if(!Validator.validateUsername(username) || !jwt.getSubject().equals(username))
-            return Response.ok("Invalid Username.").status(Response.Status.BAD_REQUEST).build();
+            return Response.ok("Invalid Username.", MediaType.TEXT_PLAIN).status(Response.Status.BAD_REQUEST).build();
 
         if(dataForm == null)
-            return Response.ok("Invalid data.").status(Response.Status.BAD_REQUEST).build();
+            return Response.ok("Invalid data.", MediaType.TEXT_PLAIN).status(Response.Status.BAD_REQUEST).build();
 
         UserEntity existingUser = userRepository.findUserByUsername(username);
         if(existingUser == null)

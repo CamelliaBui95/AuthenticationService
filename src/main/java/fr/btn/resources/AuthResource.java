@@ -99,7 +99,7 @@ public class AuthResource {
 
         // send link to forgotPassword here
         if(!Argon2.validate(password, foundUser.getPassword())) {
-            evaluateAccessAndFailedAttempts(foundUser);
+            Validator.evaluateAccessAndFailedAttempts(foundUser);
 
             return Response.ok("Incorrect Password.").status(Response.Status.NOT_ACCEPTABLE).build();
         }
@@ -174,7 +174,7 @@ public class AuthResource {
             return accessValidatorRes;
 
         if(!Argon2.validate(password, foundUser.getPassword())) {
-            evaluateAccessAndFailedAttempts(foundUser);
+            Validator.evaluateAccessAndFailedAttempts(foundUser);
 
             return Response.ok("Incorrect Password.").status(Response.Status.NOT_ACCEPTABLE).build();
         }
@@ -187,7 +187,7 @@ public class AuthResource {
             if(Utils.isCodeExpired(lastAccessInstant.toEpochMilli()))
                 return Response.ok("Code is expired.").status(Response.Status.NOT_ACCEPTABLE).build();
         } else {
-            evaluateAccessAndFailedAttempts(foundUser);
+            Validator.evaluateAccessAndFailedAttempts(foundUser);
 
             return Response.ok("Incorrect Pin Code.").status(Response.Status.NOT_ACCEPTABLE).build();
         }
@@ -285,14 +285,6 @@ public class AuthResource {
         } while(userRepository.count("pinCode=?1", pinCode) != 0);
 
         return pinCode;
-    }
-
-    private void evaluateAccessAndFailedAttempts(UserEntity user) {
-        int numFails = user.getNumFailAttempts() == null ? 0 : user.getNumFailAttempts();
-        user.setNumFailAttempts(numFails + 1);
-
-        if(user.getNumFailAttempts() >= 3)
-            user.setLastAccess(LocalDateTime.now());
     }
 }
 

@@ -1,6 +1,7 @@
 package fr.btn.utils;
 
 import fr.btn.entities.UserEntity;
+import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
 import java.time.LocalDateTime;
@@ -27,7 +28,7 @@ public class Validator {
         if(canAccess)
             return Response.ok().build();
 
-        return Response.ok("Your account is locked until " + lockedUntil).status(Response.Status.FORBIDDEN).build();
+        return Response.ok("Your account is locked until " + lockedUntil, MediaType.TEXT_PLAIN).status(Response.Status.FORBIDDEN).build();
     }
 
     public static boolean validateUsername(String username) {
@@ -51,5 +52,13 @@ public class Validator {
                 + "[^-][A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*(\\.[A-Za-z]{2,})$";
 
         return Pattern.compile(pattern).matcher(email).matches();
+    }
+
+    public static void evaluateAccessAndFailedAttempts(UserEntity user) {
+        int numFails = user.getNumFailAttempts() == null ? 0 : user.getNumFailAttempts();
+        user.setNumFailAttempts(numFails + 1);
+
+        if(user.getNumFailAttempts() >= 3)
+            user.setLastAccess(LocalDateTime.now());
     }
 }

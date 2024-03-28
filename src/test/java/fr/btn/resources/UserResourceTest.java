@@ -1,6 +1,8 @@
 package fr.btn.resources;
 
 import fr.btn.WireMockMailService;
+import fr.btn.dtos.UserDataForm;
+import fr.btn.dtos.UserDto;
 import fr.btn.entities.UserEntity;
 import fr.btn.repositories.UserRepository;
 import fr.btn.securityUtils.Argon2;
@@ -8,11 +10,13 @@ import fr.btn.securityUtils.TokenUtil;
 import io.quarkus.test.InjectMock;
 import io.quarkus.test.common.QuarkusTestResource;
 import io.quarkus.test.junit.QuarkusTest;
+import io.vertx.ext.auth.User;
 import jakarta.transaction.Transactional;
 import org.apache.http.HttpStatus;
 import org.junit.jupiter.api.*;
 import org.mockito.Mockito;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 
@@ -37,7 +41,7 @@ class UserResourceTest {
 
     @BeforeAll
     static void init() {
-        userToken = TokenUtil.generateJwt("TestUser1", "USER");
+        userToken = TokenUtil.generateJwt("TestUser", "USER");
         adminToken = TokenUtil.generateJwt("TestAdmin", "ADMIN");
     }
 
@@ -252,10 +256,215 @@ class UserResourceTest {
     }
 
     @Test
-    void modifyPassword() {
+    @Order(13)
+    void testModifyPasswordWithValidData() {
+        given()
+                .header("Authorization", "Bearer " + userToken)
+                .formParam("password", "testPassword")
+                .formParam("new_password", "newPassword")
+                .when()
+                .post(ENDPOINT + "TestUser/modify_password")
+                .then()
+                .contentType("text/plain")
+                .statusCode(200)
+                .body(is("Please confirm your request to reset password by clicking on the link that has been sent to your email."));
     }
 
     @Test
-    void modifyUserData() {
+    @Order(14)
+    void testModifyPasswordWithInvalidUsername() {
+        given()
+                .header("Authorization", "Bearer " + userToken)
+                .formParam("password", "testPassword")
+                .formParam("new_password", "newPassword")
+                .when()
+                .post(ENDPOINT + "Test User/modify_password")
+                .then()
+                .contentType("text/plain")
+                .statusCode(HttpStatus.SC_BAD_REQUEST)
+                .body(is("Invalid Username."));
+    }
+
+    @Test
+    @Order(15)
+    void testModifyPasswordWithInvalidNewPassword() {
+        given()
+                .header("Authorization", "Bearer " + userToken)
+                .formParam("password", "testPassword")
+                .formParam("new_password", "123") // password is too short
+                .when()
+                .post(ENDPOINT + "TestUser/modify_password")
+                .then()
+                .contentType("text/plain")
+                .statusCode(HttpStatus.SC_BAD_REQUEST)
+                .body(is("New password is invalid."));
+    }
+
+    @Test
+    @Order(16)
+    void testModifyPasswordForNonExistentUser() {
+        given()
+                .header("Authorization", "Bearer " + userToken)
+                .formParam("password", "testPassword")
+                .formParam("new_password", "newPassword")
+                .when()
+                .post(ENDPOINT + "FalseUser/modify_password")
+                .then()
+                .contentType("text/plain")
+                .statusCode(HttpStatus.SC_NOT_FOUND)
+                .body(is("User not found."));
+    }
+
+    @Test
+    @Order(17)
+    void testModifyPasswordForUserWithInvalidAccess() {
+        String message = given()
+                            .header("Authorization", "Bearer " + userToken)
+                            .formParam("password", "testPassword")
+                            .formParam("new_password", "newPassword")
+                            .when()
+                            .post(ENDPOINT + "TestUser2/modify_password") // this mock user has invalid access
+                            .then()
+                            .contentType("text/plain")
+                            .statusCode(HttpStatus.SC_FORBIDDEN)
+                            .extract()
+                            .body()
+                            .asString();
+
+        assertThat("Error message is correct.", message.startsWith("Your account is locked until "));
+    }
+
+    @Test
+    @Order(18)
+    void testModifyPasswordForUserWithIncorrectPassword() {
+            given()
+                .header("Authorization", "Bearer " + userToken)
+                .formParam("password", "jkhdfkjsh") // incorrect password
+                .formParam("new_password", "newPassword")
+                .when()
+                .post(ENDPOINT + "TestUser/modify_password") // this mock user has invalid access
+                .then()
+                .contentType("text/plain")
+                .statusCode(HttpStatus.SC_FORBIDDEN)
+                .body(is("Incorrect Password."));
+
+            assertEquals(1, mockUser1.getNumFailAttempts());
+    }
+
+    @Test
+    @Order(19)
+    void testModifyUserDataWithValidData() {
+        UserDataForm dataForm = UserDataForm
+                .builder()
+                .firstName("New First Name")
+                .lastName("New Last Name")
+                .birthdate(LocalDate.parse("1995-10-11"))
+                .build();
+
+        UserDto updatedUser = given()
+                .header("Authorization", "Bearer " + userToken)
+                .contentType("application/json")
+                .body(dataForm)
+                .when()
+                .put(ENDPOINT + "TestUser/modify_data")
+                .then()
+                .statusCode(200)
+                .contentType("application/json")
+                .extract()
+                .body()
+                .as(UserDto.class);
+
+        assertEquals(dataForm.getFirstName(), updatedUser.getFirstName());
+        assertEquals(dataForm.getLastName(), updatedUser.getLastName());
+        assertEquals(dataForm.getBirthdate(), updatedUser.getBirthdate());
+
+        assertEquals(dataForm.getFirstName(), mockUser1.getFirstName());
+        assertEquals(dataForm.getLastName(), mockUser1.getLastName());
+        assertEquals(dataForm.getBirthdate(), mockUser1.getBirthdate());
+    }
+
+    @Test
+    @Order(20)
+    void testModifyUserDataWithInvalidUsername() {
+        UserDataForm dataForm = UserDataForm
+                .builder()
+                .firstName("New First Name")
+                .lastName("New Last Name")
+                .birthdate(LocalDate.parse("1995-10-11"))
+                .build();
+
+        given()
+                .header("Authorization", "Bearer " + userToken)
+                .contentType("application/json")
+                .body(dataForm)
+                .when()
+                .put(ENDPOINT + ".DFS/modify_data") // Invalid Username
+                .then()
+                .statusCode(HttpStatus.SC_BAD_REQUEST)
+                .body(is("Invalid Username."));
+    }
+
+    @Test
+    @Order(21)
+    void testModifyUserDataWithNoDataForm() {
+
+        given()
+                .header("Authorization", "Bearer " + userToken)
+                .contentType("application/json")
+                .when()
+                .put(ENDPOINT + "TestUser/modify_data") // Invalid Username
+                .then()
+                .statusCode(HttpStatus.SC_BAD_REQUEST)
+                .body(is("Invalid data."));
+    }
+
+    @Test
+    @Order(22)
+    void testModifyDataForNonExistentUser() {
+        String mockToken = TokenUtil.generateJwt("FalseUser", "USER");
+
+        UserDataForm dataForm = UserDataForm
+                .builder()
+                .firstName("New First Name")
+                .lastName("New Last Name")
+                .birthdate(LocalDate.parse("1995-10-11"))
+                .build();
+
+        given()
+                .header("Authorization", "Bearer " + mockToken)
+                .contentType("application/json")
+                .body(dataForm)
+                .when()
+                .put(ENDPOINT + "FalseUser/modify_data") // Invalid Username
+                .then()
+                .statusCode(HttpStatus.SC_NOT_FOUND);
+    }
+
+    @Test
+    @Order(23)
+    void testModifyUserDataWithInvalidAccess() {
+        String user2Token = TokenUtil.generateJwt("TestUser2", "USER");
+
+        UserDataForm dataForm = UserDataForm
+                .builder()
+                .firstName("New First Name")
+                .lastName("New Last Name")
+                .birthdate(LocalDate.parse("1995-10-11"))
+                .build();
+
+        String message = given()
+                            .header("Authorization", "Bearer " + user2Token)
+                            .contentType("application/json")
+                            .body(dataForm)
+                            .when()
+                            .put(ENDPOINT + "TestUser2/modify_data") // Invalid Username
+                            .then()
+                            .contentType("text/plain")
+                            .statusCode(HttpStatus.SC_FORBIDDEN)
+                            .extract()
+                            .body()
+                            .asString();
+
+        assertThat("Error message is correct.", message.startsWith("Your account is locked until "));
     }
 }
